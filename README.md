@@ -1,0 +1,1 @@
+Ethereum mining rig configuration helper
