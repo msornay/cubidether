@@ -3,8 +3,11 @@ package main
 import (
 	"bufio"
 	"log"
+	"math/rand"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 )
 
 type RigConfig struct {
@@ -24,15 +27,33 @@ func readWords(path string) ([]string, error) {
 	for scanner.Scan() {
 		words = append(words, scanner.Text())
 	}
-	return lines, scanner.Err()
+	return words, scanner.Err()
+}
 
+// Sample n word from list (with replaceament)
+func sample(list []string, n int) []string {
+	m := len(list)
+	r := make([]string, n)
+	for i := 0; i < n; i++ {
+		r[i] = list[rand.Intn(m)]
+	}
+	return r
+}
+
+const baseUrl = "https://ethercubi.lol/"
+const idLen = 3
+
+// Create an id for a new rig config
+func createId(alphabet []string) string {
+	return strings.Join(sample(alphabet, idLen), "-")
 }
 
 func cubiHandler() http.Handler {
-
 	db := make(map[string]*RigConfig)
 	words, err := readWords("wordlist")
-	if err != nil()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -47,7 +68,15 @@ func cubiHandler() http.Handler {
 			// w.Write([]byte(c.Coinbase))
 			w.Write([]byte("The Ether must flow !"))
 		case "POST":
-			log.Println(re)
+			var id string
+			for {
+				id = createId(words)
+				if _, ok := db[id]; !ok {
+					break
+				}
+			}
+
+			log.Println(id)
 		default:
 			http.Error(w, "MethodNotAllowed", http.StatusMethodNotAllowed)
 		}
@@ -55,6 +84,8 @@ func cubiHandler() http.Handler {
 }
 
 func main() {
+	rand.Seed(time.Now().UTC().UnixNano())
+
 	http.Handle("/", cubiHandler())
 
 	log.Println("Listening...")
