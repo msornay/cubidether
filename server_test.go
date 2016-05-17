@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -13,22 +13,26 @@ import (
 var statusesTest = []struct {
 	method string
 	path   string
+	body   []byte
 	code   int
 }{
-	{"HEAD", "/", 405},
-	{"PUT", "/", 405},
-	{"GET", "/XXX", 404},
-	{"POST", "/", 200},
+	{"HEAD", "/", nil, 405},
+	{"PUT", "/", nil, 405},
+	{"GET", "/foo", nil, 404},
+	{"POST", "/", nil, 400},          // No body
+	{"POST", "/", []byte("{}"), 400}, // Wrong body
+	{"POST", "/", []byte(
+		`{"coinbase": "0x1111111111111111111111111111111111111111"}`), 200},
 }
 
 func TestStatuses(t *testing.T) {
 	for _, tt := range statusesTest {
-		r := &http.Request{
-			Method: tt.method,
-			URL: &url.URL{
-				Path: tt.path,
-			},
-		}
+		r, _ := http.NewRequest(
+			tt.method,
+			"https://ethercubi.lol/"+tt.path,
+			bytes.NewBuffer(tt.body),
+		)
+
 		h := cubiHandler()
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
@@ -38,15 +42,39 @@ func TestStatuses(t *testing.T) {
 	}
 }
 
-
-func TestSample(t *testing.T) {
+func TestSampleSize(t *testing.T) {
 	list := []string{"a", "b", "c", "d"}
-	s := sample(list, 2)
+	s, _ := sample(list, 2)
 	if len(s) != 2 {
 		t.Errorf("sample length : %s want %d", len(s), 2)
 	}
 }
 
+func TestSampleInvalidSize(t *testing.T) {
+	list := []string{"a", "b", "c", "d"}
+	_, err := sample(list, 5)
+	if err == nil {
+		t.Error("expected an invalid sample size error")
+	}
+}
+
+var addressTest = []struct {
+	addr  string
+	valid bool
+}{
+	{"", false},
+	{"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", false},
+	{"0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", true},
+}
+
+func TestValidAddress(t *testing.T) {
+	for _, tt := range addressTest {
+		r := validAddress(tt.addr)
+		if r != tt.valid {
+			t.Errorf("%s valid: %t wants %t", tt.addr, r, tt.valid)
+		}
+	}
+}
 
 func TestMain(m *testing.M) {
 	rand.Seed(time.Now().UTC().UnixNano())
