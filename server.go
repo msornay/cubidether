@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 )
 
@@ -139,7 +140,13 @@ func validAddress(addr string) bool {
 
 func cubiHandler() http.Handler {
 	db := NewRigDb()
+
 	words, err := readWords("wordlist")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	installTemplate, err := template.ParseFiles("install_rig.sh")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -148,11 +155,14 @@ func cubiHandler() http.Handler {
 		switch r.Method {
 		case "GET":
 			id := strings.Trim(r.URL.Path, "/")
-			_, ok := db.Get(id)
+			rig, ok := db.Get(id)
 			if !ok {
 				http.NotFound(w, r)
 				return
 			}
+
+			installTemplate.Execute(w, rig)
+
 			w.Write([]byte("The Ether must flow !"))
 
 		case "POST":
@@ -180,6 +190,11 @@ func cubiHandler() http.Handler {
 					break
 				}
 			}
+
+			// Reply a 201 Created with the ressource id in JSON
+			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(struct{ RigId string }{id})
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

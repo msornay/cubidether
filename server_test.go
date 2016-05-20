@@ -22,7 +22,7 @@ var statusesTest = []struct {
 	{"POST", "/", nil, 400},          // No body
 	{"POST", "/", []byte("{}"), 400}, // Wrong body
 	{"POST", "/", []byte(
-		`{"coinbase": "0x1111111111111111111111111111111111111111"}`), 200},
+		`{"coinbase": "0x1111111111111111111111111111111111111111"}`), 201},
 }
 
 func TestStatuses(t *testing.T) {
@@ -74,6 +74,26 @@ func TestValidAddress(t *testing.T) {
 			t.Errorf("%s valid: %t wants %t", tt.addr, r, tt.valid)
 		}
 	}
+}
+
+func TestPostGet(t *testing.T) {
+	post, _ := http.NewRequest(
+		"POST",
+		"https://ethercubi.lol/",
+		bytes.NewBuffer([]byte(
+			`{"coinbase": "0x1111111111111111111111111111111111111111"}`)),
+	)
+
+	h := cubiHandler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, post)
+	if rr.Code != 201 {
+		t.Errorf("POST returned %d wants 201", rr.Code)
+	}
+
+	t.Log(rr.HeaderMap)
+	t.Log(rr.Body)
+
 }
 
 func TestMain(m *testing.M) {
