@@ -163,8 +163,6 @@ func cubiHandler() http.Handler {
 
 			installTemplate.Execute(w, rig)
 
-			w.Write([]byte("The Ether must flow !"))
-
 		case "POST":
 			if r.Body == nil {
 				http.Error(w, "empty request body", http.StatusBadRequest)
@@ -190,6 +188,8 @@ func cubiHandler() http.Handler {
 					break
 				}
 			}
+
+			db.Set(id, &rig)
 
 			// Reply a 201 Created with the ressource id in JSON
 			w.Header().Set("Content-Type", "application/json; charset=UTF-8")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -85,15 +86,31 @@ func TestPostGet(t *testing.T) {
 	)
 
 	h := cubiHandler()
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, post)
-	if rr.Code != 201 {
-		t.Errorf("POST returned %d wants 201", rr.Code)
+	postRec := httptest.NewRecorder()
+	h.ServeHTTP(postRec, post)
+	if postRec.Code != 201 {
+		t.Errorf("POST returned %d wants 201", postRec.Code)
 	}
 
-	t.Log(rr.HeaderMap)
-	t.Log(rr.Body)
+	// Retrieve the id we will GET from the response
+	var resp struct{ RigId string }
+	json.NewDecoder(postRec.Body).Decode(&resp)
 
+	t.Log("POST: ressource created with id: ", resp.RigId)
+
+	get, _ := http.NewRequest(
+		"GET",
+		"https://ethercubi.lol/"+resp.RigId,
+		nil,
+	)
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, get)
+	if getRec.Code != 200 {
+		t.Errorf("GET returned %d wants 200", getRec.Code)
+	}
+
+	t.Logf("GET /%s:", resp.RigId)
+	t.Log(getRec.Body)
 }
 
 func TestMain(m *testing.M) {
