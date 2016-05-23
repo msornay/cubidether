@@ -34,7 +34,7 @@ func TestStatuses(t *testing.T) {
 			bytes.NewBuffer(tt.body),
 		)
 
-		h := cubiHandler()
+		h := cubiHandler(NewRigDb(time.Hour), "install_rig.sh", 3)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		if rr.Code != tt.code {
@@ -85,7 +85,7 @@ func TestPostGet(t *testing.T) {
 			`{"coinbase": "0x1111111111111111111111111111111111111111"}`)),
 	)
 
-	h := cubiHandler()
+	h := cubiHandler(NewRigDb(time.Hour), "install_rig.sh", 2)
 	postRec := httptest.NewRecorder()
 	h.ServeHTTP(postRec, post)
 	if postRec.Code != 201 {
@@ -111,6 +111,34 @@ func TestPostGet(t *testing.T) {
 
 	t.Logf("GET /%s:", resp.RigId)
 	t.Log(getRec.Body)
+}
+
+func TestSetGet(t *testing.T) {
+	db := NewRigDb(time.Hour)
+	db.Set("foo", &Rig{Coinbase: "0x1111111111111111111111111111111111111111"})
+
+	r, ok := db.Get("foo")
+	if !ok {
+		t.Error("foo is not retrieved from db")
+	}
+
+	if r.Coinbase != "0x1111111111111111111111111111111111111111" {
+		t.Error("invalid entry retrieved")
+	}
+}
+
+func TestCleanup(t *testing.T) {
+	db := NewRigDb(1)
+	db.Set("foo", &Rig{Coinbase: "0x1111111111111111111111111111111111111111"})
+	stop := startCleanupTask(db, 100*time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
+
+	// Use the internal map directly because Get() checks entries expiration too
+	if _, ok := db.rigs["foo"]; ok {
+		t.Error("foo entry hasn't been removed")
+	}
+
+	close(stop)
 }
 
 func TestMain(m *testing.M) {

@@ -20,36 +20,40 @@ type Rig struct {
 	Coinbase string
 }
 
-// Rig configuration are stored along a timestamp so they expire after some
+// rig configuration are stored along a timestamp so they expire after some
 // time
 type RigEntry struct {
 	Rig      *Rig
 	Creation time.Time
 }
 
-const expirationMinutes = 15
-
-func (r *RigEntry) expired() bool {
-	if time.Since(r.Creation) > expirationMinutes*time.Minute {
+// check if an entry has expired given a TTL
+func (r *RigEntry) expired(ttl time.Duration) bool {
+	if time.Since(r.Creation) > ttl {
 		return true
 	}
 	return false
 }
 
+// in-memory map of the rigs configurations
 type RigDb struct {
-	rw   sync.RWMutex
+	sync.RWMutex
 	rigs map[string]*RigEntry
+	ttl  time.Duration
 }
 
-func NewRigDb() *RigDb {
+// Create a new db where entries will expire after TTL
+func NewRigDb(ttl time.Duration) *RigDb {
 	return &RigDb{
 		rigs: make(map[string]*RigEntry),
+		ttl:  ttl,
 	}
 }
 
+// add/override an entry
 func (db *RigDb) Set(id string, r *Rig) {
-	db.rw.Lock()
-	defer db.rw.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	db.rigs[id] = &RigEntry{
 		Rig:      r,
@@ -57,28 +61,48 @@ func (db *RigDb) Set(id string, r *Rig) {
 	}
 }
 
+// retrieve an entry
 func (db *RigDb) Get(id string) (*Rig, bool) {
-	db.rw.RLock()
-	defer db.rw.RUnlock()
+	db.RLock()
+	defer db.RUnlock()
 	v, ok := db.rigs[id]
-	if !ok || v.expired() {
+	if !ok || v.expired(db.ttl) {
 		return nil, false
 	}
 	return v.Rig, true
 }
 
+// delete expired entries
 func (db *RigDb) cleanup() {
-	db.rw.Lock()
-	defer db.rw.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	for k, v := range db.rigs {
-		if v.expired() {
+		if v.expired(db.ttl) {
 			delete(db.rigs, k)
 		}
 	}
 }
 
-// Returns a list of lines of a text file
+// starts a Ticker to cleanup db regulary
+func startCleanupTask(db *RigDb, t time.Duration) chan<- struct{} {
+	ticker := time.NewTicker(t)
+	quit := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				db.cleanup()
+			case <-quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+	return quit
+}
+
+// returns a list of lines of a text file
 func readWords(path string) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -94,7 +118,7 @@ func readWords(path string) ([]string, error) {
 	return words, scanner.Err()
 }
 
-// Sample n strings from population
+// sample n strings from population
 func sample(population []string, n int) ([]string, error) {
 	m := len(population)
 	if m < n {
@@ -119,12 +143,9 @@ func sample(population []string, n int) ([]string, error) {
 	return result, nil
 }
 
-const baseUrl = "https://ethercubi.lol/"
-const idLen = 3
-
-// Create an id for a new rig config
-func createId(words []string) string {
-	ws, err := sample(words, idLen)
+// create an id for a new rig config
+func createId(words []string, n int) string {
+	ws, err := sample(words, n)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -133,20 +154,19 @@ func createId(words []string) string {
 
 var addrRegexp = regexp.MustCompile("0x[0123456789abcdefABCDEF]{40}")
 
-// Check if addr is a valid ethereum address
+// check if addr is a valid ethereum address
 func validAddress(addr string) bool {
 	return addrRegexp.MatchString(addr)
 }
 
-func cubiHandler() http.Handler {
-	db := NewRigDb()
-
+// creates the HTTP handler
+func cubiHandler(db *RigDb, installFile string, idLen int) http.Handler {
 	words, err := readWords("wordlist")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	installTemplate, err := template.ParseFiles("install_rig.sh")
+	installTemplate, err := template.ParseFiles(installFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -183,7 +203,7 @@ func cubiHandler() http.Handler {
 
 			var id string
 			for {
-				id = createId(words)
+				id = createId(words, idLen)
 				if _, ok := db.Get(id); !ok {
 					break
 				}
@@ -205,8 +225,14 @@ func cubiHandler() http.Handler {
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	http.Handle("/", cubiHandler())
+	db := NewRigDb(15 * time.Minute)
+
+	http.Handle("/", cubiHandler(db, "install_rig.sh", 3))
+
+	stop := startCleanupTask(db, time.Minute)
 
 	log.Println("Listening...")
 	http.ListenAndServe(":3000", nil)
+
+	close(stop)
 }
