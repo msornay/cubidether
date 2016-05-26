@@ -16,83 +16,76 @@ import (
 	"time"
 )
 
-type Rig struct {
-	Coinbase string
-}
-
-// rig configuration are stored along a timestamp so they expire after some
-// time
-type RigEntry struct {
-	Rig      *Rig
-	Creation time.Time
+type TTLMapEntry struct {
+     Creation time.Time
+     Value interface{}
 }
 
 // check if an entry has expired given a TTL
-func (r *RigEntry) expired(ttl time.Duration) bool {
-	if time.Since(r.Creation) > ttl {
+func (e *TTLMapEntry) expired(ttl time.Duration) bool {
+	if time.Since(e.Creation) > ttl {
 		return true
 	}
 	return false
 }
 
-// in-memory map of the rigs configurations
-type RigDb struct {
-	sync.RWMutex
-	rigs map[string]*RigEntry
-	ttl  time.Duration
+type TTLMap struct {
+     mu sync.RWMutex
+     ttl  time.Duration
+     items    map[string]*TTLMapEntry
 }
 
-// Create a new db where entries will expire after TTL
-func NewRigDb(ttl time.Duration) *RigDb {
-	return &RigDb{
-		rigs: make(map[string]*RigEntry),
+func NewTTLMap(ttl time.Duration) *TTLMap {
+	return &TTLMap{
+		items: make(map[string]*TTLMapEntry),
 		ttl:  ttl,
 	}
 }
 
 // add/override an entry
-func (db *RigDb) Set(id string, r *Rig) {
-	db.Lock()
-	defer db.Unlock()
+func (m *TTLMap) Set(k string, v interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	db.rigs[id] = &RigEntry{
-		Rig:      r,
+	m.items[k] = &TTLMapEntry{
 		Creation: time.Now(),
+		Value:      v,
 	}
 }
 
 // retrieve an entry
-func (db *RigDb) Get(id string) (*Rig, bool) {
-	db.RLock()
-	defer db.RUnlock()
-	v, ok := db.rigs[id]
-	if !ok || v.expired(db.ttl) {
+func (m *TTLMap) Get(k string) (interface{}, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	v, ok := m.items[k]
+	if !ok || v.expired(m.ttl) {
 		return nil, false
 	}
-	return v.Rig, true
+	return v.Value, true
 }
 
 // delete expired entries
-func (db *RigDb) cleanup() {
-	db.Lock()
-	defer db.Unlock()
+func (m *TTLMap) cleanup() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	for k, v := range db.rigs {
-		if v.expired(db.ttl) {
-			delete(db.rigs, k)
+	for k, v := range m.items {
+		if v.expired(m.ttl) {
+			delete(m.items, k)
 		}
 	}
 }
 
 // starts a Ticker to cleanup db regulary
-func startCleanupTask(db *RigDb, t time.Duration) chan<- struct{} {
+func startCleanupTask(m *TTLMap, t time.Duration) chan<- struct{} {
 	ticker := time.NewTicker(t)
 	quit := make(chan struct{})
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				db.cleanup()
+				m.cleanup()
 			case <-quit:
 				ticker.Stop()
 				return
@@ -159,8 +152,14 @@ func validAddress(addr string) bool {
 	return addrRegexp.MatchString(addr)
 }
 
+
+type Rig struct {
+     Coinbase string
+}
+
+
 // creates the HTTP handler
-func cubiHandler(db *RigDb, installFile string, idLen int) http.Handler {
+func cubiHandler(rigs *TTLMap, installFile string, idLen int) http.Handler {
 	words, err := readWords("wordlist")
 	if err != nil {
 		log.Fatal(err)
@@ -175,7 +174,7 @@ func cubiHandler(db *RigDb, installFile string, idLen int) http.Handler {
 		switch r.Method {
 		case "GET":
 			id := strings.Trim(r.URL.Path, "/")
-			rig, ok := db.Get(id)
+			rig, ok := rigs.Get(id)
 			if !ok {
 				http.NotFound(w, r)
 				return
@@ -204,12 +203,12 @@ func cubiHandler(db *RigDb, installFile string, idLen int) http.Handler {
 			var id string
 			for {
 				id = createId(words, idLen)
-				if _, ok := db.Get(id); !ok {
+				if _, ok := rigs.Get(id); !ok {
 					break
 				}
 			}
 
-			db.Set(id, &rig)
+			rigs.Set(id, &rig)
 
 			// Reply a 201 Created with the ressource id in JSON
 			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -225,11 +224,11 @@ func cubiHandler(db *RigDb, installFile string, idLen int) http.Handler {
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	db := NewRigDb(15 * time.Minute)
+	m := NewTTLMap(15 * time.Minute)
 
-	http.Handle("/", cubiHandler(db, "install_rig.sh", 3))
+	http.Handle("/", cubiHandler(m, "install_rig.sh", 3))
 
-	stop := startCleanupTask(db, time.Minute)
+	stop := startCleanupTask(m, time.Minute)
 
 	log.Println("Listening...")
 	http.ListenAndServe(":3000", nil)
