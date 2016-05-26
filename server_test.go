@@ -34,7 +34,7 @@ func TestStatuses(t *testing.T) {
 			bytes.NewBuffer(tt.body),
 		)
 
-		h := cubiHandler(NewRigDb(time.Hour), "install_rig.sh", 3)
+		h := cubiHandler(NewTTLMap(time.Hour), "install_rig.sh", 3)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		if rr.Code != tt.code {
@@ -85,7 +85,7 @@ func TestPostGet(t *testing.T) {
 			`{"coinbase": "0x1111111111111111111111111111111111111111"}`)),
 	)
 
-	h := cubiHandler(NewRigDb(time.Hour), "install_rig.sh", 2)
+	h := cubiHandler(NewTTLMap(time.Hour), "install_rig.sh", 2)
 	postRec := httptest.NewRecorder()
 	h.ServeHTTP(postRec, post)
 	if postRec.Code != 201 {
@@ -114,13 +114,15 @@ func TestPostGet(t *testing.T) {
 }
 
 func TestSetGet(t *testing.T) {
-	db := NewRigDb(time.Hour)
-	db.Set("foo", &Rig{Coinbase: "0x1111111111111111111111111111111111111111"})
+	m := NewTTLMap(time.Hour)
+	m.Set("foo", &Rig{Coinbase: "0x1111111111111111111111111111111111111111"})
 
-	r, ok := db.Get("foo")
+	v, ok := m.Get("foo")
 	if !ok {
-		t.Error("foo is not retrieved from db")
+		t.Error("foo is not retrieved from map")
 	}
+
+	r := v.(*Rig)
 
 	if r.Coinbase != "0x1111111111111111111111111111111111111111" {
 		t.Error("invalid entry retrieved")
@@ -128,13 +130,13 @@ func TestSetGet(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	db := NewRigDb(1)
-	db.Set("foo", &Rig{Coinbase: "0x1111111111111111111111111111111111111111"})
-	stop := startCleanupTask(db, 100*time.Millisecond)
+	m := NewTTLMap(1)
+	m.Set("foo", &Rig{Coinbase: "0x1111111111111111111111111111111111111111"})
+	stop := startCleanupTask(m, 100*time.Millisecond)
 	time.Sleep(200 * time.Millisecond)
 
 	// Use the internal map directly because Get() checks entries expiration too
-	if _, ok := db.rigs["foo"]; ok {
+	if _, ok := m.items["foo"]; ok {
 		t.Error("foo entry hasn't been removed")
 	}
 
